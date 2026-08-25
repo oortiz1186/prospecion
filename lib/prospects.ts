@@ -23,6 +23,20 @@ type ProspectRow = {
   personalized_message: string | null;
 };
 
+export type ProspectInput = {
+  name: string;
+  category: string;
+  city: string;
+  website?: string;
+  phone?: string;
+  whatsapp?: string;
+  googleRating?: number;
+  reviews?: number;
+  hasWebsite?: boolean;
+  hasWhatsappVisible?: boolean;
+  sectorHighValue?: boolean;
+};
+
 function mapProspect(row: ProspectRow): Prospect {
   return {
     id: row.id,
@@ -63,19 +77,7 @@ export async function getProspect(id: string): Promise<Prospect | null> {
   return result.rows[0] ? mapProspect(result.rows[0]) : null;
 }
 
-export async function createProspect(input: {
-  name: string;
-  category: string;
-  city: string;
-  website?: string;
-  phone?: string;
-  whatsapp?: string;
-  googleRating?: number;
-  reviews?: number;
-  hasWebsite?: boolean;
-  hasWhatsappVisible?: boolean;
-  sectorHighValue?: boolean;
-}): Promise<Prospect> {
+export async function createProspect(input: ProspectInput): Promise<Prospect> {
   const result = await db.query<ProspectRow>(
     `INSERT INTO prospects (
       name,category,city,website,phone,whatsapp,google_rating,reviews,
@@ -97,6 +99,62 @@ export async function createProspect(input: {
     ]
   );
   return mapProspect(result.rows[0]);
+}
+
+export async function bulkCreateProspects(inputs: ProspectInput[]): Promise<Prospect[]> {
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const created: Prospect[] = [];
+    for (const input of inputs) {
+      const result = await client.query<ProspectRow>(
+        `INSERT INTO prospects (
+          name,category,city,website,phone,whatsapp,google_rating,reviews,
+          has_website,has_whatsapp_visible,sector_high_value
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+        RETURNING ${selectColumns}`,
+        [input.name,input.category,input.city,input.website||null,input.phone||null,input.whatsapp||null,input.googleRating??null,input.reviews??null,input.hasWebsite??Boolean(input.website),input.hasWhatsappVisible??Boolean(input.whatsapp),input.sectorHighValue??false]
+      );
+      created.push(mapProspect(result.rows[0]));
+    }
+    await client.query('COMMIT');
+    return created;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function updateProspect(id: string, input: Partial<ProspectInput>): Promise<Prospect | null> {
+  const current = await getProspect(id);
+  if (!current) return null;
+  const next = {
+    name: input.name ?? current.name,
+    category: input.category ?? current.category,
+    city: input.city ?? current.city,
+    website: input.website ?? current.website ?? '',
+    phone: input.phone ?? current.phone ?? '',
+    whatsapp: input.whatsapp ?? current.whatsapp ?? '',
+    googleRating: input.googleRating ?? current.googleRating,
+    reviews: input.reviews ?? current.reviews,
+    hasWebsite: input.hasWebsite ?? Boolean(input.website ?? current.website),
+    hasWhatsappVisible: input.hasWhatsappVisible ?? Boolean(input.whatsapp ?? current.whatsapp),
+    sectorHighValue: input.sectorHighValue ?? current.sectorHighValue,
+  };
+  const result = await db.query<ProspectRow>(
+    `UPDATE prospects SET name=$2,category=$3,city=$4,website=$5,phone=$6,whatsapp=$7,google_rating=$8,reviews=$9,
+      has_website=$10,has_whatsapp_visible=$11,sector_high_value=$12,updated_at=now()
+     WHERE id=$1 RETURNING ${selectColumns}`,
+    [id,next.name,next.category,next.city,next.website||null,next.phone||null,next.whatsapp||null,next.googleRating??null,next.reviews??null,next.hasWebsite,next.hasWhatsappVisible,next.sectorHighValue]
+  );
+  return result.rows[0] ? mapProspect(result.rows[0]) : null;
+}
+
+export async function deleteProspect(id: string): Promise<boolean> {
+  const result = await db.query('DELETE FROM prospects WHERE id=$1', [id]);
+  return (result.rowCount ?? 0) > 0;
 }
 
 export async function updateProspectStatus(id: string, status: ProspectStatus): Promise<Prospect | null> {
