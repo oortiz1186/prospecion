@@ -21,18 +21,19 @@ export async function POST(req: NextRequest){
       const prospect=pending[i];
       let success=false;
       let lastError='';
-      // Un error puntual no debe cancelar todo el lote. Reintentamos una vez y seguimos.
       for(let attempt=1;attempt<=2&&!success;attempt++){
         try{
           const analysis=await analyzeProspectWithGemini(prospect);
           let updated=await saveAnalysis(prospect.id,analysis);
+          if(!updated) throw new Error('No se pudo guardar el análisis');
           analyzed++;
-          if(analysis.score>=70) qualified++;
-          if(updated && analysis.score>=input.autoDemoMinScore){
-            updated=await updateProspectStatus(prospect.id,'DEMO_CREATED');
+          const finalScore=updated.opportunityScore;
+          if(finalScore>=70) qualified++;
+          if(finalScore>=input.autoDemoMinScore){
+            updated=await updateProspectStatus(prospect.id,'DEMO_CREATED') || updated;
             demos++;
           }
-          results.push({id:prospect.id,name:prospect.name,score:analysis.score,status:updated?.status,ok:true});
+          results.push({id:prospect.id,name:prospect.name,score:finalScore,status:updated.status,ok:true});
           success=true;
         }catch(error){
           lastError=error instanceof Error?error.message:'Error inesperado';
