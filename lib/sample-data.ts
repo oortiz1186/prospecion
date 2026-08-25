@@ -1,0 +1,8 @@
+import { Prospect } from './types';
+
+export const sampleProspects: Prospect[] = [
+  {id:'1',name:'Dental Nova León',category:'Dentista',city:'León, Gto.',phone:'4770000001',whatsapp:'524770000001',googleRating:4.8,reviews:74,hasWebsite:false,hasWhatsappVisible:false,sectorHighValue:true,opportunityScore:80,status:'QUALIFIED',mainProblem:'No cuenta con un sitio propio que capture búsquedas locales.',salesOpportunity:'Convertir búsquedas de servicios dentales en conversaciones por WhatsApp.',suggestedHeadline:'Una sonrisa que se nota desde la primera cita',suggestedServices:['Limpieza dental','Ortodoncia','Implantes'],personalizedMessage:'Hola, vi Dental Nova León y noté que podrían facilitar mucho que nuevos pacientes encuentren sus tratamientos y contacten directo por WhatsApp. Preparé una propuesta rápida de cómo podría verse.'},
+  {id:'2',name:'Arquitectura Bajío',category:'Arquitectos',city:'León, Gto.',phone:'4770000002',whatsapp:'524770000002',googleRating:4.6,reviews:38,hasWebsite:false,hasWhatsappVisible:true,sectorHighValue:true,opportunityScore:65,status:'NEW'},
+  {id:'3',name:'Psicología Integral',category:'Psicología',city:'León, Gto.',phone:'4770000003',whatsapp:'524770000003',googleRating:4.9,reviews:51,hasWebsite:false,hasWhatsappVisible:false,sectorHighValue:true,opportunityScore:80,status:'DEMO_CREATED',suggestedHeadline:'Un espacio profesional para volver a sentir equilibrio',suggestedServices:['Terapia individual','Terapia de pareja','Acompañamiento emocional']},
+  {id:'4',name:'Taller Eurocar',category:'Taller especializado',city:'León, Gto.',phone:'4770000004',whatsapp:'524770000004',googleRating:4.4,reviews:112,hasWebsite:true,hasWhatsappVisible:false,sectorHighValue:true,opportunityScore:45,status:'CONTACTED'}
+];
