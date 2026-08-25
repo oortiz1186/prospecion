@@ -47,7 +47,7 @@ export async function POST(req: NextRequest){
 
     const [south,north,west,east]=geo[0].boundingbox;
     const bbox=`${south},${west},${north},${east}`;
-    const query=`[out:json][timeout:30];(nwr${category.selector}(${bbox}););out center tags ${Math.min(input.limit*4,200)};`;
+    const query=`[out:json][timeout:30];(nwr${category.selector}(${bbox}););out center ${Math.min(input.limit*4,200)};`;
 
     const overpassRes=await fetch('https://overpass-api.de/api/interpreter',{
       method:'POST',
