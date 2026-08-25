@@ -44,7 +44,8 @@ export default function Home(){
     qualified:prospects.filter(p=>p.opportunityScore>=70).length,
     demos:prospects.filter(p=>['DEMO_CREATED','CONTACTED','RESPONDED','INTERESTED','WON'].includes(p.status)).length,
     contacted:prospects.filter(p=>['CONTACTED','RESPONDED','FOLLOWUP_1','FOLLOWUP_2','INTERESTED','WON'].includes(p.status)).length,
-    won:prospects.filter(p=>p.status==='WON').length
+    won:prospects.filter(p=>p.status==='WON').length,
+    pending:prospects.filter(p=>!p.mainProblem&&['NEW','QUALIFIED'].includes(p.status)).length,
   }),[prospects]);
 
   function applyProspect(next:Prospect){setProspects(items=>items.map(x=>x.id===next.id?next:x));setSelected(next);}
@@ -69,6 +70,19 @@ export default function Home(){
       if(!res.ok) throw new Error(next.error||'No se pudo analizar');
       applyProspect(next); setNotice(`Análisis completado. Score: ${next.opportunityScore}/100.`);
     }catch(e){setError(e instanceof Error?e.message:'Error inesperado');}
+    finally{setBusy(false);}
+  }
+
+  async function analyzeBatch(){
+    setBusy(true); setError(''); setNotice('Analizando hasta 5 prospectos. Puede tardar unos segundos...');
+    try{
+      const res=await fetch('/api/prospects/analyze-batch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({limit:5,autoDemoMinScore:70})});
+      const data=await res.json();
+      if(!res.ok) throw new Error(data.error||'No se pudo ejecutar el análisis masivo');
+      await loadProspects();
+      if(!data.pendingFound){setNotice(data.message||'No hay prospectos pendientes de análisis.');return;}
+      setNotice(`Lote terminado: ${data.analyzed} analizados · ${data.qualified} con score ≥70 · ${data.demos} demos generadas${data.failed?` · ${data.failed} con error`:''}.`);
+    }catch(e){setError(e instanceof Error?e.message:'Error inesperado');setNotice('');}
     finally{setBusy(false);}
   }
 
@@ -139,6 +153,7 @@ export default function Home(){
     <header className="topbar"><div className="brand"><h1>Prospección IA</h1><p>PostgreSQL propio + descubrimiento + scoring + demos personalizadas</p></div><div className="toolbar">
       <input ref={fileRef} hidden type="file" accept=".csv,text/csv" onChange={e=>e.target.files?.[0]&&void importCsv(e.target.files[0])}/>
       <button className="btn secondary" disabled={busy} onClick={()=>setShowDiscover(v=>!v)}>{showDiscover?'Cerrar búsqueda':'Buscar negocios'}</button>
+      <button className="btn secondary" disabled={busy||stats.pending===0} onClick={()=>void analyzeBatch()}>{busy?'Procesando...':`Analizar pendientes (${stats.pending})`}</button>
       <button className="btn secondary" disabled={busy} onClick={()=>fileRef.current?.click()}>Importar CSV</button>
       <button className="btn" onClick={()=>setShowForm(v=>!v)}>{showForm?'Cerrar':'+ Agregar prospecto'}</button>
     </div></header>
@@ -160,7 +175,7 @@ export default function Home(){
       <Editable label="Negocio" value={form.name} onChange={v=>setForm({...form,name:v})}/><Editable label="Categoría" value={form.category} onChange={v=>setForm({...form,category:v})}/><Editable label="Ciudad" value={form.city} onChange={v=>setForm({...form,city:v})}/><Editable label="Sitio web" value={form.website} onChange={v=>setForm({...form,website:v})}/><Editable label="Teléfono" value={form.phone} onChange={v=>setForm({...form,phone:v})}/><Editable label="WhatsApp" value={form.whatsapp} onChange={v=>setForm({...form,whatsapp:v})}/><div className="toolbar full"><button className="btn" disabled={busy||!form.name||!form.category||!form.city}>Guardar prospecto</button></div>
     </form></section>}
 
-    <section className="grid stats"><Stat label="Prospectos" value={stats.total}/><Stat label="Calificados ≥70" value={stats.qualified}/><Stat label="Demos" value={stats.demos}/><Stat label="Contactados" value={stats.contacted}/><Stat label="Ventas" value={stats.won}/></section>
+    <section className="grid stats"><Stat label="Prospectos" value={stats.total}/><Stat label="Pendientes IA" value={stats.pending}/><Stat label="Calificados ≥70" value={stats.qualified}/><Stat label="Demos" value={stats.demos}/><Stat label="Contactados" value={stats.contacted}/><Stat label="Ventas" value={stats.won}/></section>
 
     <section className="split"><div className="card"><h2 className="panel-title">Pipeline {loading&&<span className="muted"> · cargando...</span>}</h2><div className="table-wrap"><table className="table"><thead><tr><th>Negocio</th><th>Sector</th><th>Score</th><th>Estado</th></tr></thead><tbody>
       {prospects.map(p=><tr key={p.id} onClick={()=>{setSelected(p);setEditing(false);}} style={{cursor:'pointer'}}><td>{p.name}<div className="muted">{p.city}</div></td><td>{p.category}</td><td className={`score ${p.opportunityScore>=70?'hot':p.opportunityScore>=50?'mid':''}`}>{p.opportunityScore}</td><td><span className="badge">{p.status}</span></td></tr>)}
@@ -175,7 +190,21 @@ export default function Home(){
   </main>
 }
 
-function parseCsv(text:string){const rows:string[][]=[];let row:string[]=[];let cell='';let quoted=false;for(let i=0;i<text.length;i++){const c=text[i];if(c==='"'){if(quoted&&text[i+1]==='"'){cell+='"';i++;}else quoted=!quoted;}else if(c===','&&!quoted){row.push(cell);cell='';}else if((c==='\n'||c==='\r')&&!quoted){if(c==='\r'&&text[i+1]==='\n')i++;row.push(cell);if(row.some(v=>v.length))rows.push(row);row=[];cell='';}else cell+=c;}row.push(cell);if(row.some(v=>v.length))rows.push(row);return rows;}
+function parseCsv(text:string){
+  const rows:string[][]=[]; let row:string[]=[]; let cell=''; let quoted=false;
+  for(let i=0;i<text.length;i++){
+    const c=text[i];
+    if(c==='"'){
+      if(quoted&&text[i+1]==='"'){cell+='"';i++;} else quoted=!quoted;
+    } else if(c===','&&!quoted){row.push(cell);cell='';}
+    else if((c==='\n'||c==='\r')&&!quoted){
+      if(c==='\r'&&text[i+1]==='\n') i++;
+      row.push(cell); if(row.some(v=>v.length)) rows.push(row); row=[]; cell='';
+    } else cell+=c;
+  }
+  row.push(cell); if(row.some(v=>v.length)) rows.push(row);
+  return rows;
+}
 function normalizeHeader(value:string){return value.trim().toLowerCase().replace(/[ _-]/g,'');}
 function Stat({label,value}:{label:string,value:number}){return <div className="card stat"><div className="label">{label}</div><div className="value">{value}</div></div>}
 function Field({label,value}:{label:string,value:string}){return <div className="field"><label>{label}</label><input readOnly value={value}/></div>}
