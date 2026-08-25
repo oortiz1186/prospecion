@@ -17,7 +17,7 @@ export async function POST(_: NextRequest, { params }: { params: { id: string } 
     if (!prospect) return NextResponse.json({ error: 'Prospecto no encontrado' }, { status: 404 });
 
     const key = process.env.GEMINI_API_KEY;
-    const model = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
+    const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
     if (!key) return NextResponse.json({ error: 'GEMINI_API_KEY no configurada' }, { status: 500 });
 
     const prompt = `Actúa como analista comercial de una agencia de desarrollo web.\n\nNegocio: ${prospect.name}\nCategoría: ${prospect.category}\nCiudad: ${prospect.city}\nSitio actual: ${prospect.website || 'No indicado'}\nRating Google: ${prospect.googleRating ?? 'No indicado'}\nReseñas: ${prospect.reviews ?? 'No indicado'}\nWhatsApp visible: ${prospect.hasWhatsappVisible ? 'Sí' : 'No'}\n\nDevuelve exclusivamente JSON válido con: {"score":0,"main_problem":"","sales_opportunity":"","suggested_headline":"","suggested_services":[],"personalized_message":""}. El score va de 0 a 100 y mide qué tan buena oportunidad es ofrecer una web enfocada en conseguir contactos por WhatsApp. El mensaje debe ser breve, natural, específico y no mencionar inteligencia artificial.`;
@@ -32,12 +32,23 @@ export async function POST(_: NextRequest, { params }: { params: { id: string } 
     });
 
     if (!response.ok) {
-      return NextResponse.json({ error: 'Gemini respondió con error', details: await response.text() }, { status: 502 });
+      const raw = await response.text();
+      let detail = raw;
+      try {
+        const parsed = JSON.parse(raw);
+        detail = parsed?.error?.message || raw;
+      } catch {}
+
+      return NextResponse.json({
+        error: `Gemini respondió con error (${response.status})`,
+        details: detail,
+        model,
+      }, { status: 502 });
     }
 
     const data = await response.json();
     const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) return NextResponse.json({ error: 'Gemini no devolvió contenido' }, { status: 502 });
+    if (!text) return NextResponse.json({ error: 'Gemini no devolvió contenido', model }, { status: 502 });
 
     const analysis = analysisSchema.parse(JSON.parse(text));
     const updated = await saveAnalysis(params.id, analysis);
