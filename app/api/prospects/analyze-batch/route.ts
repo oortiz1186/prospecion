@@ -5,6 +5,7 @@ import { listProspects, saveAnalysis, updateProspectStatus } from '../../../../l
 
 const schema = z.object({
   limit: z.number().int().min(1).max(10).default(5),
+  minScoreForAI: z.number().int().min(0).max(100).default(60),
   autoDemoMinScore: z.number().int().min(0).max(100).default(70),
 });
 function sleep(ms:number){ return new Promise(resolve=>setTimeout(resolve,ms)); }
@@ -13,7 +14,9 @@ export async function POST(req: NextRequest){
   try{
     const input=schema.parse(await req.json().catch(()=>({})));
     const all=await listProspects();
-    const pending=all.filter(p=>!p.mainProblem && ['NEW','QUALIFIED'].includes(p.status)).slice(0,input.limit);
+    const eligible=all.filter(p=>!p.mainProblem && ['NEW','QUALIFIED'].includes(p.status) && p.opportunityScore>=input.minScoreForAI);
+    const skipped=all.filter(p=>!p.mainProblem && ['NEW','QUALIFIED'].includes(p.status) && p.opportunityScore<input.minScoreForAI).length;
+    const pending=eligible.slice(0,input.limit);
     const results:{id:string;name:string;score?:number;status?:string;ok:boolean;error?:string}[]=[];
     let analyzed=0,qualified=0,demos=0;
 
@@ -44,7 +47,16 @@ export async function POST(req: NextRequest){
       if(i<pending.length-1) await sleep(6500);
     }
 
-    return NextResponse.json({pendingFound:pending.length,analyzed,qualified,demos,failed:results.filter(r=>!r.ok).length,results,message:pending.length?undefined:'No hay prospectos pendientes de análisis.'});
+    return NextResponse.json({
+      pendingFound:pending.length,
+      eligibleFound:eligible.length,
+      skippedLowScore:skipped,
+      minScoreForAI:input.minScoreForAI,
+      analyzed,qualified,demos,
+      failed:results.filter(r=>!r.ok).length,
+      results,
+      message:eligible.length?undefined:`No hay prospectos con score >= ${input.minScoreForAI} pendientes de análisis.`
+    });
   }catch(error){
     return NextResponse.json({error:error instanceof Error?error.message:'No se pudo ejecutar el análisis masivo'},{status:400});
   }
