@@ -1,134 +1,104 @@
 # Prospección IA
 
-Sistema para convertir prospección comercial en un flujo repetible: registrar negocios, calificarlos con IA, generar mensajes y demos, dar seguimiento y medir ventas.
+Sistema de prospección comercial con descubrimiento de negocios, scoring objetivo, análisis con IA, demos y seguimiento sobre PostgreSQL propio.
 
-## Stack actual
+## Stack
 
-- Next.js 14 + TypeScript
+- Next.js + TypeScript
 - PostgreSQL 16 propio
-- Driver `pg`
-- Docker Compose para desarrollo local
-- Gemini para análisis comercial
-- Dashboard con CRUD real de prospectos
-- Demos dinámicas cargadas desde PostgreSQL
+- Docker Compose
+- Gemini 2.5 Flash-Lite para análisis comercial
+- OpenStreetMap/Overpass como descubrimiento gratuito
+- Google Places opcional para descubrimiento y enriquecimiento
 
-## 1. Actualizar dependencias
+## Configuración
 
-Después de hacer `git pull`:
-
-```bash
-npm install
-```
-
-## 2. Configurar variables
-
-Crea `.env.local`:
+`.env.local`:
 
 ```env
 DATABASE_URL=postgresql://prospecion:prospecion_dev@localhost:5434/prospecion
 GEMINI_API_KEY=tu_clave
-GEMINI_MODEL=gemini-2.0-flash
+GEMINI_MODEL=gemini-2.5-flash-lite
+
+# auto | osm | google
+DISCOVERY_PROVIDER=auto
+GOOGLE_PLACES_API_KEY=
 ```
 
-No subas `.env.local` ni claves reales al repositorio.
+`DISCOVERY_PROVIDER=auto` usa Google Places cuando hay una API key configurada; si no, usa OpenStreetMap.
 
-## 3. Levantar PostgreSQL
-
-Requiere Docker Desktop instalado y ejecutándose.
+## Desarrollo
 
 ```bash
+npm install
 docker compose up -d
-```
-
-El contenedor se llama `prospecion-postgres` y expone PostgreSQL en el puerto local `5434` para evitar conflictos con otras instalaciones de PostgreSQL.
-
-El primer arranque ejecuta automáticamente `db/init.sql`, crea el esquema y carga cuatro prospectos de ejemplo.
-
-Verificar:
-
-```bash
-docker compose ps
-```
-
-Entrar a PostgreSQL:
-
-```bash
-docker exec -it prospecion-postgres psql -U prospecion -d prospecion
-```
-
-Dentro de `psql`:
-
-```sql
-SELECT id, name, opportunity_score, status FROM prospects;
-```
-
-Salir con:
-
-```text
-\q
-```
-
-## 4. Ejecutar la aplicación
-
-```bash
 npm run dev
 ```
 
-Abre `http://localhost:3000`.
+Aplicación: `http://localhost:3000`.
 
-## Flujo funcional actual
+## Scoring objetivo
 
-1. El dashboard carga prospectos desde PostgreSQL mediante `GET /api/prospects`.
-2. `+ Agregar prospecto` crea registros reales mediante `POST /api/prospects`.
-3. `Analizar con IA` consulta Gemini y persiste score, problema, oportunidad, headline, servicios y mensaje en PostgreSQL.
-4. Un score >= 70 mueve un prospecto nuevo a `QUALIFIED`.
-5. `Marcar contactado` persiste el estado `CONTACTED` y fecha de contacto.
-6. `Ver demo` carga directamente el prospecto desde PostgreSQL.
+El score no lo decide Gemini. Se calcula con datos verificables:
+
+- sin sitio web: +40
+- sin WhatsApp visible: +15
+- teléfono disponible: +10
+- sector de alto valor: +15
+- rating >= 4: +10
+- 30+ reseñas: +5
+- 100+ reseñas: +5
+
+Los prospectos con score menor a 60 no consumen Gemini en el análisis masivo. Los de 70 o más pueden generar demo automáticamente.
+
+## Descubrimiento
+
+`POST /api/prospects/discover`
+
+Busca negocios por ciudad/categoría, deduplica contra PostgreSQL y los guarda con score calculado desde el inicio.
+
+Con Google Places configurado puede obtener teléfono, sitio web, rating y número de reseñas. Sin clave continúa funcionando con OpenStreetMap.
+
+## Enriquecimiento de registros existentes
+
+`POST /api/prospects/enrich-batch`
+
+Requiere `GOOGLE_PLACES_API_KEY` y procesa hasta 10 prospectos por lote. Completa datos faltantes y `updateProspect` recalcula automáticamente el score sin volver a gastar Gemini.
+
+Ejemplo PowerShell:
+
+```powershell
+Invoke-RestMethod `
+  -Uri "http://localhost:3000/api/prospects/enrich-batch" `
+  -Method POST `
+  -ContentType "application/json" `
+  -Body '{"limit":5,"minScore":0}'
+```
+
+## Recalcular scores sin IA
+
+```powershell
+Invoke-RestMethod `
+  -Uri "http://localhost:3000/api/prospects/recalculate-scores" `
+  -Method POST
+```
 
 ## Pipeline
 
 `NEW -> QUALIFIED -> DEMO_CREATED -> CONTACTED -> RESPONDED -> FOLLOWUP_1/FOLLOWUP_2 -> INTERESTED -> WON/LOST`
 
-## Base de datos
+## Flujo recomendado
 
-Archivo inicial: `db/init.sql`.
+1. Buscar negocios.
+2. Calcular score objetivo sin IA.
+3. Enriquecer datos cuando Google Places esté disponible.
+4. Analizar con Gemini únicamente candidatos con score >= 60.
+5. Generar demo automática para score >= 70.
+6. Contactar y registrar seguimiento.
 
-Tabla principal: `prospects`.
+## Seguridad
 
-Datos incluidos:
-
-- identificación y contacto
-- presencia web/WhatsApp
-- rating y reseñas
-- scoring
-- análisis IA
-- mensaje personalizado
-- servicios sugeridos
-- estado comercial
-- fechas de contacto y seguimiento
-
-El volumen Docker `prospecion_pgdata` conserva los datos aunque el contenedor se reinicie.
-
-Para destruir completamente la BD local y volver a ejecutar el seed:
-
-```bash
-docker compose down -v
-docker compose up -d
-```
-
-**Cuidado:** `down -v` elimina todos los datos locales.
-
-## Próximas verticales
-
-1. Importación CSV real.
-2. Edición y eliminación de prospectos.
-3. Generación de demos por plantilla/sector.
-4. Búsqueda de negocios mediante fuentes y APIs permitidas.
-5. Agenda automática de follow-ups.
-6. Métricas de conversión e ingresos/MRR.
-7. Autenticación y roles antes de desplegar públicamente.
-8. Envíos únicamente mediante canales/proveedores compatibles con sus políticas; evitar spam masivo.
-
-## Producción
-
-En producción no uses la contraseña de desarrollo del `docker-compose.yml`. Crea credenciales distintas, limita el acceso de red a PostgreSQL y configura `DATABASE_URL` solo como secreto del servidor.
+- Nunca subas `.env.local` ni API keys.
+- En producción usa credenciales PostgreSQL distintas a las de desarrollo.
+- Limita PostgreSQL a red privada.
+- Usa únicamente proveedores y canales compatibles con sus políticas y evita mensajería masiva no solicitada.
