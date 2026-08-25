@@ -1,5 +1,6 @@
 import { db } from './db';
 import type { Prospect, ProspectStatus } from './types';
+import { calculateOpportunityScore } from './scoring';
 
 type ProspectRow = {
   id: string;
@@ -77,26 +78,26 @@ export async function getProspect(id: string): Promise<Prospect | null> {
   return result.rows[0] ? mapProspect(result.rows[0]) : null;
 }
 
+function scoreFromInput(input: ProspectInput){
+  return calculateOpportunityScore({
+    hasWebsite: input.hasWebsite ?? Boolean(input.website),
+    hasWhatsappVisible: input.hasWhatsappVisible ?? Boolean(input.whatsapp),
+    googleRating: input.googleRating,
+    reviews: input.reviews,
+    sectorHighValue: input.sectorHighValue ?? false,
+    phone: input.phone,
+  });
+}
+
 export async function createProspect(input: ProspectInput): Promise<Prospect> {
+  const score=scoreFromInput(input);
   const result = await db.query<ProspectRow>(
     `INSERT INTO prospects (
       name,category,city,website,phone,whatsapp,google_rating,reviews,
-      has_website,has_whatsapp_visible,sector_high_value
-    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+      has_website,has_whatsapp_visible,sector_high_value,opportunity_score,status
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::prospect_status)
     RETURNING ${selectColumns}`,
-    [
-      input.name,
-      input.category,
-      input.city,
-      input.website || null,
-      input.phone || null,
-      input.whatsapp || null,
-      input.googleRating ?? null,
-      input.reviews ?? null,
-      input.hasWebsite ?? Boolean(input.website),
-      input.hasWhatsappVisible ?? Boolean(input.whatsapp),
-      input.sectorHighValue ?? false,
-    ]
+    [input.name,input.category,input.city,input.website||null,input.phone||null,input.whatsapp||null,input.googleRating??null,input.reviews??null,input.hasWebsite??Boolean(input.website),input.hasWhatsappVisible??Boolean(input.whatsapp),input.sectorHighValue??false,score,score>=70?'QUALIFIED':'NEW']
   );
   return mapProspect(result.rows[0]);
 }
@@ -107,13 +108,14 @@ export async function bulkCreateProspects(inputs: ProspectInput[]): Promise<Pros
     await client.query('BEGIN');
     const created: Prospect[] = [];
     for (const input of inputs) {
+      const score=scoreFromInput(input);
       const result = await client.query<ProspectRow>(
         `INSERT INTO prospects (
           name,category,city,website,phone,whatsapp,google_rating,reviews,
-          has_website,has_whatsapp_visible,sector_high_value
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+          has_website,has_whatsapp_visible,sector_high_value,opportunity_score,status
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::prospect_status)
         RETURNING ${selectColumns}`,
-        [input.name,input.category,input.city,input.website||null,input.phone||null,input.whatsapp||null,input.googleRating??null,input.reviews??null,input.hasWebsite??Boolean(input.website),input.hasWhatsappVisible??Boolean(input.whatsapp),input.sectorHighValue??false]
+        [input.name,input.category,input.city,input.website||null,input.phone||null,input.whatsapp||null,input.googleRating??null,input.reviews??null,input.hasWebsite??Boolean(input.website),input.hasWhatsappVisible??Boolean(input.whatsapp),input.sectorHighValue??false,score,score>=70?'QUALIFIED':'NEW']
       );
       created.push(mapProspect(result.rows[0]));
     }
@@ -143,11 +145,13 @@ export async function updateProspect(id: string, input: Partial<ProspectInput>):
     hasWhatsappVisible: input.hasWhatsappVisible ?? Boolean(input.whatsapp ?? current.whatsapp),
     sectorHighValue: input.sectorHighValue ?? current.sectorHighValue,
   };
+  const score=calculateOpportunityScore(next);
   const result = await db.query<ProspectRow>(
     `UPDATE prospects SET name=$2,category=$3,city=$4,website=$5,phone=$6,whatsapp=$7,google_rating=$8,reviews=$9,
-      has_website=$10,has_whatsapp_visible=$11,sector_high_value=$12,updated_at=now()
+      has_website=$10,has_whatsapp_visible=$11,sector_high_value=$12,opportunity_score=$13,
+      status=CASE WHEN status IN ('NEW','QUALIFIED') THEN $14::prospect_status ELSE status END,updated_at=now()
      WHERE id=$1 RETURNING ${selectColumns}`,
-    [id,next.name,next.category,next.city,next.website||null,next.phone||null,next.whatsapp||null,next.googleRating??null,next.reviews??null,next.hasWebsite,next.hasWhatsappVisible,next.sectorHighValue]
+    [id,next.name,next.category,next.city,next.website||null,next.phone||null,next.whatsapp||null,next.googleRating??null,next.reviews??null,next.hasWebsite,next.hasWhatsappVisible,next.sectorHighValue,score,score>=70?'QUALIFIED':'NEW']
   );
   return result.rows[0] ? mapProspect(result.rows[0]) : null;
 }
@@ -174,7 +178,10 @@ export async function saveAnalysis(id: string, analysis: {
   suggested_services: string[];
   personalized_message: string;
 }): Promise<Prospect | null> {
-  const status: ProspectStatus = analysis.score >= 70 ? 'QUALIFIED' : 'NEW';
+  const current=await getProspect(id);
+  if(!current) return null;
+  const score=calculateOpportunityScore(current);
+  const status: ProspectStatus = score >= 70 ? 'QUALIFIED' : 'NEW';
   const result = await db.query<ProspectRow>(
     `UPDATE prospects SET
       opportunity_score=$2,
@@ -183,11 +190,20 @@ export async function saveAnalysis(id: string, analysis: {
       suggested_headline=$5,
       suggested_services=$6::jsonb,
       personalized_message=$7,
-      status=CASE WHEN status='NEW' THEN $8::prospect_status ELSE status END,
+      status=CASE WHEN status IN ('NEW','QUALIFIED') THEN $8::prospect_status ELSE status END,
       updated_at=now()
     WHERE id=$1
     RETURNING ${selectColumns}`,
-    [id, analysis.score, analysis.main_problem, analysis.sales_opportunity, analysis.suggested_headline, JSON.stringify(analysis.suggested_services), analysis.personalized_message, status]
+    [id, score, analysis.main_problem, analysis.sales_opportunity, analysis.suggested_headline, JSON.stringify(analysis.suggested_services), analysis.personalized_message, status]
   );
   return result.rows[0] ? mapProspect(result.rows[0]) : null;
+}
+
+export async function recalculateAllScores(): Promise<number>{
+  const all=await listProspects();
+  for(const prospect of all){
+    const score=calculateOpportunityScore(prospect);
+    await db.query(`UPDATE prospects SET opportunity_score=$2,status=CASE WHEN status IN ('NEW','QUALIFIED') THEN $3::prospect_status ELSE status END,updated_at=now() WHERE id=$1`,[prospect.id,score,score>=70?'QUALIFIED':'NEW']);
+  }
+  return all.length;
 }
