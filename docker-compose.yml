@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: prospecion-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: prospecion
+      POSTGRES_USER: prospecion
+      POSTGRES_PASSWORD: prospecion_dev
+    ports:
+      - "5434:5432"
+    volumes:
+      - prospecion_pgdata:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U prospecion -d prospecion"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  prospecion_pgdata:
